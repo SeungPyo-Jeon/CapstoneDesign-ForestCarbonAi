@@ -20,7 +20,7 @@ jobs:
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
+          github_token: ${{ secrets.GH_TOKEN }}
           publish_dir: ./DemoPage # 배포할 폴더 지정
           publish_branch: gh-pages # 배포될 브랜치 (없으면 자동 생성)
           # user_name: 'github-actions[bot]' # 커밋 작성자 이름 (선택 사항)
