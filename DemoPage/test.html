@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Leaflet.Sync 양방향 테스트</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Leaflet CSS -->
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+
+    <!-- Leaflet JavaScript (반드시 플러그인보다 먼저) -->
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+
+    <!-- Leaflet.Sync Plugin (반드시 Leaflet.js 다음에 로드) -->
+    <script src="https://cdn.jsdelivr.net/npm/leaflet.sync@0.2.4/L.Map.Sync.js"></script>
+    <!-- 또는 로컬 경로: <script src="L.Map.Sync.js"></script> -->
+
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #mapContainer {
+        display: flex;
+        height: 100vh;
+      }
+      .map-element {
+        width: 50%;
+        height: 100%;
+        border: 1px solid #ccc;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="mapContainer">
+      <div id="map1" class="map-element"></div>
+      <div id="map2" class="map-element"></div>
+    </div>
+
+    <script>
+      // 맵 초기화 함수
+      function initBasicMap(mapId) {
+        const map = L.map(mapId, {
+          center: [37.5665, 126.978], // 서울 중심 좌표
+          zoom: 10, // 초기 줌 레벨 약간 줄임
+        });
+
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "© OpenStreetMap contributors",
+          maxZoom: 18, // 최대 줌 레벨 명시
+        }).addTo(map);
+
+        return map;
+      }
+
+      // 맵 인스턴스 생성
+      const map1 = initBasicMap("map1");
+      const map2 = initBasicMap("map2");
+
+      // Leaflet.Sync를 사용하여 두 맵 동기화
+      // 이 한 줄로 map1 <-> map2 양방향 동기화가 설정되어야 합니다.
+      map1.sync(map2);
+
+      // 추가적인 검증을 위해 콘솔에 로그를 남겨봅니다.
+      map1.on("zoomstart movestart", function (e) {
+        console.log("Map 1 " + e.type + " event");
+      });
+      map2.on("zoomstart movestart", function (e) {
+        console.log("Map 2 " + e.type + " event");
+      });
+
+      map1.on("sync", function (e) {
+        console.log(
+          "Map 1 SYNC event, master:",
+          e.master,
+          "propagatedFrom:",
+          e.propagatedFrom ? e.propagatedFrom._leaflet_id : "N/A"
+        );
+      });
+      map2.on("sync", function (e) {
+        console.log(
+          "Map 2 SYNC event, master:",
+          e.master,
+          "propagatedFrom:",
+          e.propagatedFrom ? e.propagatedFrom._leaflet_id : "N/A"
+        );
+      });
+
+      console.log(
+        "맵 동기화 설정 완료. map1과 map2는 양방향으로 동기화되어야 합니다."
+      );
+      console.log("map1 Leaflet ID:", map1._leaflet_id);
+      console.log("map2 Leaflet ID:", map2._leaflet_id);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GeoJSON 지도 뷰어</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css"
+    />
+  </head>
+  <body>
+    <div class="radio-container">
+      <div class="radio-container-geojson">
+        <text>GeoJSON</text>
+        <input type="radio" id="jsonOn" name="jsonLayer" value="On" />
+        <label for="jsonOn">On</label>
+
+        <input type="radio" id="jsonOff" name="jsonLayer" value="Off" />
+        <label for="jsonOff">Off</label>
+      </div>
+
+      <div class="radio-container-orig-tif">
+        <text>Original TIF</text>
+        <input type="radio" id="origTifOn" name="origTifLayer" value="On" />
+        <label for="origTifOn">On</label>
+
+        <input
+          type="radio"
+          id="origTifOff"
+          name="origTifLayer"
+          value="Off"
+          checked="true"
+        />
+        <label for="origTifOff">Off</label>
+        <div class="radio-container-pred-tif">
+          <text>Pred TIF</text>
+          <input type="radio" id="predTifOn" name="predTifLayer" value="On" />
+          <label for="predTifOn">On</label>
+
+          <input
+            type="radio"
+            id="predTifOff"
+            name="predTifLayer"
+            value="Off"
+            checked="true"
+          />
+          <label for="origTifOff">Off</label>
+        </div>
+      </div>
+      <div class="checkbox-container">
+        <div class="checkbox-header" onclick="toggleCheckboxContainer()">
+          <text>옵션</text>
+          <span class="toggle-icon">▼</span>
+        </div>
+        <div class="checkbox-content">
+          <div class="checkbox-item">
+            <input type="checkbox" id="showLegend" name="showLegend" />
+            <label for="showLegend">범례 표시</label>
+          </div>
+          <div class="checkbox-item">
+            <input type="checkbox" id="showGrid" name="showGrid" />
+            <label for="showGrid">그리드 표시</label>
+          </div>
+          <div class="checkbox-item">
+            <input type="checkbox" id="showLabels" name="showLabels" />
+            <label for="showLabels">레이블 표시</label>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+    <script src="utils.js"></script>
+    <script src="script.js"></script>
+    <script src="worker.js"></script>
+  </body>
+</html>

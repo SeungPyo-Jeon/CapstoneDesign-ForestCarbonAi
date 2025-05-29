@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Multi Map View</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css"
+    />
+    <link href="https://cdn.osmbuildings.org/4.0.0/OSMBuildings.css" rel="stylesheet" />
+  </head>
+  <style>
+    * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+        font-family: "Palantino Linotype", "Book Antiqua", Palatino, Georgia, serif;
+      }
+      
+      body {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        height: 100vh;
+        overflow: hidden;
+      }
+      body {
+        -webkit-user-select: none;  
+        -moz-user-select: none;
+        -ms-user-select: none;
+        user-select: none;
+      }
+      .map-container {
+        position: relative;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 1px;
+        background-color: #ccc;
+        min-width: 0;
+        transition: all 0.3s ease;
+        height: 100vh;
+      }
+      
+      .map {
+        width: 100%;
+        height: 100%;
+        background-color: white;
+        position: relative;
+      }
+      .map-title {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background-color: rgba(255, 255, 255, 0.8);
+        padding: 5px 10px;
+        border-radius: 4px;
+        font-size: 16px;
+        font-weight: bold;
+        z-index: 1000;
+        max-width: 90%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      /* 그리드 중심점 스타일 */
+      .grid-center {
+        position: absolute;
+        width: 20px;
+        height: 20px;
+        background-color: #fff;
+        border: 2px solid #fff;
+        border-radius: 50%;
+        cursor: move;
+        z-index: 1000;
+        transform: translate(-50%, -50%);
+      }
+      .grid-center.collapsed {
+        background-color: #666;
+      }
+      .slider-container {
+        width: 300px;
+        background-color: #f5f5f5;
+        border-left: 1px solid #ccc;
+        transition: all 0.3s ease;
+        overflow-y: auto;
+        position: relative;
+        transform: translateX(0);
+      }
+      
+      .slider-container.collapsed {
+        transform: translateX(300px);
+        width: 0;
+      }
+      
+      .slider-toggle {
+        position: absolute;
+        right: 300px;
+        top: 50%;
+        transform: translateY(-50%);
+        background-color: #f5f5f5;
+        border: 1px solid #ccc;
+        border-right: none;
+        padding-left: 3px;
+        padding-right: 3px;
+        padding-top: 13px;
+        padding-bottom: 13px;
+        border-radius:  8px 0 0 8px ;
+        cursor: pointer;
+        z-index: 1000;
+        transition: all 0.3s ease;
+      }
+      
+      .slider-toggle.collapsed {
+        right: 0;
+      }
+      
+      .slider-content {
+        padding: 20px;
+        min-width: 300px;
+      }
+
+      /* 슬라이더 토글 버튼 호버 효과 */
+      .slider-toggle:hover {
+        background-color: #e0e0e0;
+      }
+      
+      /* 플로팅 버튼 컨테이너 */
+      .floating-buttons {
+        position: fixed;
+        top: 20px;
+        right: 320px; /* 슬라이더 너비 + 여백 */
+        z-index: 1000;
+        transition: all 0.3s ease;
+      }
+      
+      .floating-buttons.collapsed {
+        right: 20px;
+      }
+      
+      /* 메인 버튼 */
+      .floating-main {
+        width: 50px;
+        height: 50px;
+        background-color: #4CAF50;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+        visibility: hidden;
+      }
+
+      .floating-main:hover {
+        background-color: #45a049;
+        visibility: visible;
+      }
+
+      /* 서브 버튼들 */
+      .floating-sub {
+        position: absolute;
+        width: 40px;
+        height: 40px;
+        background-color: #ffffff;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        transition: all 0.3s ease;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateX(0);
+        right: 0;
+        top: -15px;
+      }
+      
+      .floating-buttons:hover .floating-sub {
+        opacity: 1;
+        visibility: visible;
+      }
+
+      .floating-sub:nth-child(2) {
+        transform: translateX(-10px);
+      }
+      
+      .floating-sub:nth-child(3) {
+        transform: translateX(-70px);
+      }
+
+      .floating-sub:hover {
+        background-color: #cccbcb;
+      }
+      
+      /* 버튼 아이콘 */
+      .floating-icon {
+        color: black;
+        font-size: 11px;
+      }
+      </style>
+  </head>
+  <body>
+    <div class="map-container">
+      <div id="speciesMap" class="map">
+        <div class="map-title">Species</div>
+      </div>
+      <div id="dbhMap" class="map">
+        <div class="map-title">DBH</div>
+      </div>
+      <div id="heightMap" class="map">
+        <div class="map-title">Height</div>
+      </div>
+      <div id="carbonMap" class="map">
+        <div class="map-title">Carbon</div>
+      </div>
+      <div class="grid-center" id="gridCenter"></div>
+    </div>
+    
+    <button class="slider-toggle" id="sliderToggle">◀</button>
+    <div class="slider-container" id="sliderContainer">
+      <div class="slider-content">
+        <h2>설정</h2>
+        <!-- 여기에 슬라이더 내용을 추가할 수 있습니다 -->
+        <button id="tifBtn">Tif Off</button>
+        <button id="statBtn">통계잡기</button>
+        <div id="statContainer" style="margin-top: 20px;"></div>
+      </div>
+    </div>
+    <div class="floating-buttons" id="floatingButtons">
+      <div class="floating-main">
+        <span class="floating-icon">+</span>
+      </div>
+      <div class="floating-sub">
+        <span class="floating-icon">Jiri</span>
+      </div>
+      <div class="floating-sub">
+        <span class="floating-icon">Sobaek</span>
+      </div>
+    </div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.sync@0.2.4/L.Map.Sync.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.7.0/math.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+    <script src="https://cdn.osmbuildings.org/classic/0.2.2b/OSMBuildings-Leaflet.js"></script>
+    <script src="utils.js"></script>
+    <script src="multiMap.js"></script>
+  </body>
+  </html>
