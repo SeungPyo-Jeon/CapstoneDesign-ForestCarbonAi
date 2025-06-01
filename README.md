@@ -1,9 +1,9 @@
 # CapstoneDesign-ForestCarbonAi
 
-캡스톤디자인 레포지토리입니다.
-Home[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/]
-종합[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html]
-수종비교[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html]
+캡스톤디자인 레포지토리입니다.  
+Home[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/]  
+종합[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html]  
+수종비교[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html]  
 
 ## 프로젝트 개요
 <img width="600" alt="Image" src="https://github.com/user-attachments/assets/4489ebc6-4b68-40b4-83a5-2e4fd50dd2ac" />   
