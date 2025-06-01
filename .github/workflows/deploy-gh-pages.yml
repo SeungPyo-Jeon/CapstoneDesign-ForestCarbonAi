@@ -1,0 +1,29 @@
+name: Deploy Demo to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main # main 브랜치에 푸시될 때 실행
+    paths:
+      - 'DemoPage/**' # demo 폴더 또는 그 하위 내용이 변경될 때만 실행 (선택 사항)
+  workflow_dispatch: # 수동 실행 옵션
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # gh-pages 브랜치에 푸시하기 위해 필요
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GH_TOKEN }}
+          publish_dir: ./DemoPage # 배포할 폴더 지정
+          publish_branch: gh-pages # 배포될 브랜치 (없으면 자동 생성)
+          # user_name: 'github-actions[bot]' # 커밋 작성자 이름 (선택 사항)
+          # user_email: 'github-actions[bot]@users.noreply.github.com' # 커밋 작성자 이메일 (선택 사항)
+          # commit_message: 'Deploy demo to gh-pages' # 커밋 메시지 (선택 사항)
+          # cname: your-custom-domain.com # 사용자 정의 도메인이 있다면
