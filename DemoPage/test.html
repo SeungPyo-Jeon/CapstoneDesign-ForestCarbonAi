@@ -1,105 +1,541 @@
 <!DOCTYPE html>
 <html>
   <head>
-    <title>Leaflet.Sync 양방향 테스트</title>
+    <title>Advanced Pixel Selection for GeoTIFF Overlay</title>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-
-    <!-- Leaflet CSS -->
     <link
       rel="stylesheet"
       href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-      crossorigin=""
     />
-
-    <!-- Leaflet JavaScript (반드시 플러그인보다 먼저) -->
-    <script
-      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-      crossorigin=""
-    ></script>
-
-    <!-- Leaflet.Sync Plugin (반드시 Leaflet.js 다음에 로드) -->
-    <script src="https://cdn.jsdelivr.net/npm/leaflet.sync@0.2.4/L.Map.Sync.js"></script>
-    <!-- 또는 로컬 경로: <script src="L.Map.Sync.js"></script> -->
-
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.1/math.min.js"></script>
     <style>
-      body {
-        margin: 0;
-        padding: 0;
+      #map {
+        height: 500px;
       }
-      #mapContainer {
-        display: flex;
-        height: 100vh;
-      }
-      .map-element {
-        width: 50%;
-        height: 100%;
+      #controls {
+        margin-top: 10px;
+        padding: 10px;
         border: 1px solid #ccc;
+        border-radius: 5px;
+      }
+      #statusMessages {
+        margin-top: 5px;
+        font-style: italic;
+        color: #555;
+      }
+      .selected-area {
+        border: 2px dashed red;
+        background-color: rgba(255, 0, 0, 0.1);
+      }
+      #progressBarContainer {
+        width: 100%;
+        background-color: #f0f0f0;
+        margin-top: 5px;
+        height: 20px;
+        border-radius: 5px;
+        overflow: hidden;
+        display: none;
+      }
+      #progressBar {
+        width: 0%;
+        height: 100%;
+        background-color: #4caf50;
+        text-align: center;
+        line-height: 20px;
+        color: white;
+        transition: width 0.1s ease-out;
+      }
+      #previewContainer {
+        margin-top: 10px;
+      }
+      #previewCanvas {
+        border: 1px solid black;
+        background-color: #eee;
       }
     </style>
   </head>
   <body>
-    <div id="mapContainer">
-      <div id="map1" class="map-element"></div>
-      <div id="map2" class="map-element"></div>
+    <div id="map"></div>
+    <div id="controls">
+      <p>
+        <strong>지침:</strong> 지도에서 두 지점을 클릭하여 분석할 영역을
+        선택하세요 (좌상단 → 우하단).
+      </p>
+      <div>첫 번째 클릭: <span id="firstClickCoordsLabel">대기 중</span></div>
+      <div>두 번째 클릭: <span id="secondClickCoordsLabel">대기 중</span></div>
+      <button id="findPixelsButton" disabled>선택 영역 픽셀 분석</button>
+      <button id="resetButton">선택 초기화</button>
+      <div id="statusMessages">
+        <div>선택된 픽셀 수: <strong id="pixelCountLabel">0</strong></div>
+        <div id="processingStatusLabel"></div>
+      </div>
+      <div id="progressBarContainer">
+        <div id="progressBar">0%</div>
+      </div>
+    </div>
+    <div id="previewContainer">
+      <p>선택된 픽셀 미리보기 (이미지 내 상대 위치):</p>
+      <canvas id="previewCanvas" width="150" height="150"></canvas>
     </div>
 
     <script>
-      // 맵 초기화 함수
-      function initBasicMap(mapId) {
-        const map = L.map(mapId, {
-          center: [37.5665, 126.978], // 서울 중심 좌표
-          zoom: 10, // 초기 줌 레벨 약간 줄임
-        });
+      document.addEventListener("DOMContentLoaded", () => {
+        // --- 기본 설정 ---
+        const IMAGE_WIDTH = 3600;
+        const IMAGE_HEIGHT = 3600;
 
+        // 사용자의 GeoTIFF 오버레이 코너 (지도 위 LatLng 좌표)
+        // 중요: 이 값은 실제 GeoTIFF의 지리적 범위와 일치해야 합니다.
+        // 순서: TopLeft, TopRight, BottomRight, BottomLeft (논리적 순서)
+        const overlaySourceCornersLatLng = [
+          //L.latLng(37.57, 126.97), // TL
+          //L.latLng(37.57, 126.985), // TR - 직사각형 예시
+          //L.latLng(37.56, 126.985), // BR
+          //L.latLng(37.56, 126.97), // BL
+          // 예시: 삐뚤어진 사변형
+          L.latLng(37.57, 126.97), // TL
+          L.latLng(37.58, 126.985), // TR
+          L.latLng(37.57, 126.985), // BR
+          L.latLng(37.56, 126.97), // BL
+        ];
+
+        // 원본 이미지의 픽셀 코너 좌표 (위 LatLng 코너와 순서 일치)
+        const imageTargetPixelCorners = [
+          [0, 0], // TL
+          [IMAGE_WIDTH, 0], // TR
+          [IMAGE_WIDTH, IMAGE_HEIGHT], // BR
+          [0, IMAGE_HEIGHT], // BL
+        ];
+
+        // --- Leaflet 지도 초기화 ---
+        const map = L.map("map").setView([37.5665, 126.978], 13); // 기본 뷰
         L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-          attribution: "© OpenStreetMap contributors",
-          maxZoom: 18, // 최대 줌 레벨 명시
+          attribution:
+            '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
         }).addTo(map);
 
-        return map;
-      }
+        // GeoTIFF 오버레이 영역 시각화 (폴리곤)
+        const overlayPolygon = L.polygon(overlaySourceCornersLatLng, {
+          color: "blue",
+          fillOpacity: 0.1,
+          weight: 2,
+        }).addTo(map);
+        try {
+          map.fitBounds(overlayPolygon.getBounds());
+        } catch (e) {
+          console.warn(
+            "오버레이 영역이 유효하지 않아 fitBounds를 실행할 수 없습니다. overlaySourceCornersLatLng를 확인하세요.",
+            e
+          );
+        }
 
-      // 맵 인스턴스 생성
-      const map1 = initBasicMap("map1");
-      const map2 = initBasicMap("map2");
+        // --- UI 요소 가져오기 ---
+        const ui = {
+          firstClickLabel: document.getElementById("firstClickCoordsLabel"),
+          secondClickLabel: document.getElementById("secondClickCoordsLabel"),
+          findButton: document.getElementById("findPixelsButton"),
+          resetButton: document.getElementById("resetButton"),
+          pixelCountLabel: document.getElementById("pixelCountLabel"),
+          processingStatusLabel: document.getElementById(
+            "processingStatusLabel"
+          ),
+          progressBarContainer: document.getElementById("progressBarContainer"),
+          progressBar: document.getElementById("progressBar"),
+          previewCanvas: document.getElementById("previewCanvas"),
+          previewCtx: document.getElementById("previewCanvas").getContext("2d"),
+        };
 
-      // Leaflet.Sync를 사용하여 두 맵 동기화
-      // 이 한 줄로 map1 <-> map2 양방향 동기화가 설정되어야 합니다.
-      map1.sync(map2);
+        // --- 상태 변수 ---
+        let firstClickLatLng = null;
+        let secondClickLatLng = null;
+        let userSelectionRectangle = null; // 사용자가 그린 사각형 레이어
+        let mapToImageTransformMatrix = null; // Homography Matrix (LayerPoint -> ImagePixel)
 
-      // 추가적인 검증을 위해 콘솔에 로그를 남겨봅니다.
-      map1.on("zoomstart movestart", function (e) {
-        console.log("Map 1 " + e.type + " event");
-      });
-      map2.on("zoomstart movestart", function (e) {
-        console.log("Map 2 " + e.type + " event");
-      });
+        // --- 변환 함수 (Homography) ---
+        /**
+         * Homography 행렬을 계산합니다. (소스 포인트 -> 대상 포인트)
+         * @param {Array<Array<number>>} srcPoints - [[x1,y1], [x2,y2], ...] (4 points)
+         * @param {Array<Array<number>>} dstPoints - [[x1',y1'], [x2',y2'], ...] (4 points)
+         * @returns {math.Matrix | null} 3x3 Homography 행렬 또는 실패 시 null
+         */
+        function calculateHomographyMatrix(srcPoints, dstPoints) {
+          if (srcPoints.length !== 4 || dstPoints.length !== 4) {
+            console.error(
+              "Homography 계산: 4개의 소스 및 대상 포인트가 필요합니다."
+            );
+            return null;
+          }
+          const A = [];
+          const b_vector = [];
+          for (let i = 0; i < 4; i++) {
+            const [x, y] = srcPoints[i];
+            const [xp, yp] = dstPoints[i];
+            A.push([x, y, 1, 0, 0, 0, -x * xp, -y * xp]);
+            A.push([0, 0, 0, x, y, 1, -x * yp, -y * yp]);
+            b_vector.push(xp);
+            b_vector.push(yp);
+          }
+          try {
+            const h_coeffs_vector = math.lusolve(A, b_vector);
+            const h = h_coeffs_vector.toArray
+              ? h_coeffs_vector.toArray().flat()
+              : h_coeffs_vector.flat(); // math.js 버전에 따라
+            return math.matrix([
+              [h[0], h[1], h[2]],
+              [h[3], h[4], h[5]],
+              [h[6], h[7], 1],
+            ]);
+          } catch (error) {
+            console.error(
+              "Homography 행렬 계산 실패:",
+              error,
+              "입력 포인트:",
+              srcPoints,
+              dstPoints
+            );
+            ui.processingStatusLabel.textContent =
+              "오류: 변환 행렬 계산 실패 (콘솔 확인)";
+            return null;
+          }
+        }
 
-      map1.on("sync", function (e) {
-        console.log(
-          "Map 1 SYNC event, master:",
-          e.master,
-          "propagatedFrom:",
-          e.propagatedFrom ? e.propagatedFrom._leaflet_id : "N/A"
+        /**
+         * Homography 행렬을 사용하여 점을 변환합니다.
+         * @param {Array<number>} point - [x, y]
+         * @param {math.Matrix} H_matrix - 3x3 Homography 행렬
+         * @returns {Array<number> | null} 변환된 [x', y'] 또는 실패 시 null
+         */
+        function applyHomography(point, H_matrix) {
+          if (!H_matrix) return null;
+          const p_homogeneous = math.matrix([point[0], point[1], 1]);
+          try {
+            const p_transformed_homogeneous = math.multiply(
+              H_matrix,
+              p_homogeneous
+            );
+            const p_th_array = p_transformed_homogeneous.toArray
+              ? p_transformed_homogeneous.toArray()
+              : p_transformed_homogeneous;
+            const w = p_th_array[2];
+            if (Math.abs(w) < 1e-8) {
+              // 0으로 나누기 방지
+              console.warn(
+                "Homography 적용 시 w가 0에 가깝습니다.",
+                point,
+                H_matrix
+              );
+              return [Infinity, Infinity]; // 또는 null 반환
+            }
+            return [p_th_array[0] / w, p_th_array[1] / w];
+          } catch (error) {
+            console.error("Homography 적용 실패:", error);
+            return null;
+          }
+        }
+
+        /**
+         * 지도 오버레이 코너와 이미지 코너를 기반으로 변환 행렬을 설정/업데이트합니다.
+         */
+        function setupMapToImageTransform() {
+          const overlayMapLayerPoints = overlaySourceCornersLatLng.map(
+            (latlng) => {
+              const point = map.latLngToLayerPoint(latlng);
+              return [point.x, point.y];
+            }
+          );
+          mapToImageTransformMatrix = calculateHomographyMatrix(
+            overlayMapLayerPoints,
+            imageTargetPixelCorners
+          );
+          if (!mapToImageTransformMatrix) {
+            ui.findButton.disabled = true;
+            alert(
+              "오류: 이미지 변환 행렬을 계산할 수 없습니다. GeoTIFF 오버레이 코너 좌표를 확인하세요."
+            );
+          }
+        }
+
+        // --- 보조 함수 ---
+        /**
+         * 점이 다각형 내부에 있는지 확인합니다 (Ray Casting 알고리즘).
+         * @param {{x: number, y: number}} point - 검사할 점
+         * @param {Array<{x: number, y: number}>} polygonVertices - 다각형의 꼭짓점 배열
+         * @returns {boolean} 점이 내부에 있으면 true
+         */
+        function isPointInPolygon(point, polygonVertices) {
+          let intersections = 0;
+          const numVertices = polygonVertices.length;
+          const { x: px, y: py } = point;
+          for (let i = 0; i < numVertices; i++) {
+            const p1 = polygonVertices[i];
+            const p2 = polygonVertices[(i + 1) % numVertices];
+            if (
+              ((p1.y <= py && py < p2.y) || (p2.y <= py && py < p1.y)) &&
+              px < ((p2.x - p1.x) * (py - p1.y)) / (p2.y - p1.y) + p1.x
+            ) {
+              intersections++;
+            }
+          }
+          return intersections % 2 === 1;
+        }
+
+        function updateProgressBar(percentage) {
+          percentage = Math.min(100, Math.max(0, Math.round(percentage)));
+          ui.progressBar.style.width = percentage + "%";
+          ui.progressBar.textContent = percentage + "%";
+        }
+
+        function resetSelectionState() {
+          firstClickLatLng = null;
+          secondClickLatLng = null;
+          ui.firstClickLabel.textContent = "대기 중";
+          ui.secondClickLabel.textContent = "대기 중";
+          ui.pixelCountLabel.textContent = "0";
+          ui.processingStatusLabel.textContent = "";
+          ui.findButton.disabled = true;
+          ui.progressBarContainer.style.display = "none";
+          updateProgressBar(0);
+          if (userSelectionRectangle) {
+            map.removeLayer(userSelectionRectangle);
+            userSelectionRectangle = null;
+          }
+          clearPreview();
+        }
+
+        function clearPreview() {
+          ui.previewCtx.clearRect(
+            0,
+            0,
+            ui.previewCanvas.width,
+            ui.previewCanvas.height
+          );
+          ui.previewCtx.fillStyle = "#eee";
+          ui.previewCtx.fillRect(
+            0,
+            0,
+            ui.previewCanvas.width,
+            ui.previewCanvas.height
+          );
+        }
+
+        function drawPreview(pixels, imgMinX, imgMinY, imgMaxX, imgMaxY) {
+          clearPreview();
+          if (!pixels || pixels.length === 0) return;
+
+          ui.previewCtx.fillStyle = "rgba(0, 0, 255, 0.7)"; // 반투명 파란색
+          const sourceWidth = Math.max(1, imgMaxX - imgMinX + 1);
+          const sourceHeight = Math.max(1, imgMaxY - imgMinY + 1);
+          const scaleX = ui.previewCanvas.width / sourceWidth;
+          const scaleY = ui.previewCanvas.height / sourceHeight;
+          const scale = Math.min(scaleX, scaleY); // 비율 유지
+
+          const offsetX = (ui.previewCanvas.width - sourceWidth * scale) / 2;
+          const offsetY = (ui.previewCanvas.height - sourceHeight * scale) / 2;
+
+          // 픽셀 크기가 너무 작아지면 1픽셀로 고정
+          const pixelDisplaySize = Math.max(1, Math.floor(scale));
+
+          pixels.forEach((p) => {
+            const canvasX = offsetX + (p.x - imgMinX) * scale;
+            const canvasY = offsetY + (p.y - imgMinY) * scale;
+            ui.previewCtx.fillRect(
+              Math.floor(canvasX),
+              Math.floor(canvasY),
+              pixelDisplaySize,
+              pixelDisplaySize
+            );
+          });
+        }
+
+        // --- 이벤트 핸들러 ---
+        map.on("click", (e) => {
+          if (!mapToImageTransformMatrix) {
+            alert(
+              "변환 행렬이 준비되지 않았습니다. 페이지를 새로고침하거나 콘솔을 확인하세요."
+            );
+            return;
+          }
+          if (!firstClickLatLng) {
+            firstClickLatLng = e.latlng;
+            ui.firstClickLabel.textContent = `Lat: ${e.latlng.lat.toFixed(
+              4
+            )}, Lng: ${e.latlng.lng.toFixed(4)}`;
+            ui.secondClickLabel.textContent = "두 번째 지점 선택 대기 중...";
+            ui.findButton.disabled = true;
+            if (userSelectionRectangle) map.removeLayer(userSelectionRectangle);
+          } else if (!secondClickLatLng) {
+            secondClickLatLng = e.latlng;
+            ui.secondClickLabel.textContent = `Lat: ${e.latlng.lat.toFixed(
+              4
+            )}, Lng: ${e.latlng.lng.toFixed(4)}`;
+            const bounds = L.latLngBounds(firstClickLatLng, secondClickLatLng);
+            if (userSelectionRectangle) map.removeLayer(userSelectionRectangle);
+            userSelectionRectangle = L.rectangle(bounds, {
+              className: "selected-area",
+              interactive: false,
+            }).addTo(map);
+            ui.findButton.disabled = false;
+            ui.processingStatusLabel.textContent = "분석 준비 완료.";
+          }
+        });
+
+        ui.resetButton.addEventListener("click", resetSelectionState);
+
+        ui.findButton.addEventListener("click", async () => {
+          if (!firstClickLatLng || !secondClickLatLng) {
+            alert("영역을 먼저 선택해주세요.");
+            return;
+          }
+          if (!mapToImageTransformMatrix) {
+            alert(
+              "이미지 변환 행렬 계산에 실패했습니다. 오버레이 코너를 확인하세요."
+            );
+            return;
+          }
+
+          ui.findButton.disabled = true;
+          ui.findButton.textContent = "분석 중...";
+          ui.processingStatusLabel.textContent = "픽셀 분석 시작...";
+          ui.pixelCountLabel.textContent = "계산 중";
+          ui.progressBarContainer.style.display = "block";
+          updateProgressBar(0);
+          clearPreview();
+
+          const userSelectionBoundsOnMap = L.latLngBounds(
+            firstClickLatLng,
+            secondClickLatLng
+          );
+          const selectedImagePixels = [];
+
+          // 1. 사용자 선택 영역(지도 LatLng)의 네 꼭짓점을 이미지 픽셀 좌표로 변환
+          const mapSelectionCornersLatLng = [
+            userSelectionBoundsOnMap.getNorthWest(),
+            userSelectionBoundsOnMap.getNorthEast(),
+            userSelectionBoundsOnMap.getSouthEast(),
+            userSelectionBoundsOnMap.getSouthWest(),
+          ];
+
+          const selectionPolygonInImageSpace = mapSelectionCornersLatLng
+            .map((latlng) => {
+              const layerPoint = map.latLngToLayerPoint(latlng);
+              const imageCoords = applyHomography(
+                [layerPoint.x, layerPoint.y],
+                mapToImageTransformMatrix
+              );
+              return imageCoords
+                ? { x: imageCoords[0], y: imageCoords[1] }
+                : null;
+            })
+            .filter((p) => p !== null); // 변환 실패한 경우 제외
+
+          if (selectionPolygonInImageSpace.length !== 4) {
+            console.error(
+              "사용자 선택 영역을 이미지 공간으로 변환 실패 (일부 코너 변환 불가)."
+            );
+            ui.processingStatusLabel.textContent = "오류: 선택 영역 변환 실패.";
+            // ... (UI 복구) ...
+            ui.findButton.disabled = false;
+            ui.findButton.textContent = "선택 영역 픽셀 분석";
+            return;
+          }
+
+          // 2. 변환된 이미지 픽셀 다각형의 바운딩 박스(AABB) 계산
+          let minScanX = IMAGE_WIDTH,
+            maxScanX = 0,
+            minScanY = IMAGE_HEIGHT,
+            maxScanY = 0;
+          selectionPolygonInImageSpace.forEach((p) => {
+            minScanX = Math.min(minScanX, p.x);
+            maxScanX = Math.max(maxScanX, p.x);
+            minScanY = Math.min(minScanY, p.y);
+            maxScanY = Math.max(maxScanY, p.y);
+          });
+
+          // AABB를 이미지 경계 내로 클램핑
+          minScanX = Math.max(0, Math.floor(minScanX));
+          maxScanX = Math.min(IMAGE_WIDTH - 1, Math.ceil(maxScanX));
+          minScanY = Math.max(0, Math.floor(minScanY));
+          maxScanY = Math.min(IMAGE_HEIGHT - 1, Math.ceil(maxScanY));
+
+          if (maxScanX < minScanX || maxScanY < minScanY) {
+            ui.processingStatusLabel.textContent =
+              "선택 영역이 이미지와 겹치지 않습니다.";
+            ui.pixelCountLabel.textContent = "0";
+            updateProgressBar(100);
+            ui.findButton.disabled = false;
+            ui.findButton.textContent = "선택 영역 픽셀 분석";
+            return;
+          }
+
+          ui.processingStatusLabel.textContent = `이미지 영역 [${minScanX}-${maxScanX}, ${minScanY}-${maxScanY}] 스캔 중...`;
+
+          // 3. AABB 내 픽셀 순회 및 Point-in-Polygon 테스트 (점진적 처리)
+          let scannedPixelCountInAABB = 0;
+          const totalPixelsInAABB =
+            (maxScanX - minScanX + 1) * (maxScanY - minScanY + 1);
+          const rowsPerChunk = 50; // UI 업데이트를 위한 청크 크기 (행 단위)
+
+          for (let iy = minScanY; iy <= maxScanY; iy++) {
+            for (let ix = minScanX; ix <= maxScanX; ix++) {
+              if (
+                isPointInPolygon({ x: ix, y: iy }, selectionPolygonInImageSpace)
+              ) {
+                selectedImagePixels.push({ x: ix, y: iy });
+              }
+              scannedPixelCountInAABB++;
+            }
+            if (iy % rowsPerChunk === 0 || iy === maxScanY) {
+              const progress =
+                totalPixelsInAABB > 0
+                  ? (scannedPixelCountInAABB / totalPixelsInAABB) * 100
+                  : 100;
+              updateProgressBar(progress);
+              ui.pixelCountLabel.textContent = `${selectedImagePixels.length}`;
+              // UI가 멈추지 않도록 이벤트 루프에 제어권 양보
+              await new Promise((resolve) => setTimeout(resolve, 0));
+            }
+          }
+
+          // 최종 결과 업데이트
+          updateProgressBar(100);
+          ui.pixelCountLabel.textContent = selectedImagePixels.length;
+          ui.processingStatusLabel.textContent = `분석 완료: ${selectedImagePixels.length}개 픽셀 선택됨.`;
+          ui.findButton.disabled = false;
+          ui.findButton.textContent = "선택 영역 픽셀 분석";
+
+          console.log(`최종 선택된 픽셀 수: ${selectedImagePixels.length}`);
+          drawPreview(
+            selectedImagePixels,
+            minScanX,
+            minScanY,
+            maxScanX,
+            maxScanY
+          );
+
+          if (selectedImagePixels.length === 0 && totalPixelsInAABB > 0) {
+            ui.processingStatusLabel.textContent +=
+              " (선택 영역 내 겹치는 이미지 픽셀 없음)";
+          }
+        });
+
+        // --- 초기화 ---
+        resetSelectionState(); // 페이지 로드 시 상태 초기화
+        // math.js 로딩 확인 및 변환 행렬 초기 계산
+        if (typeof math === "undefined") {
+          alert(
+            "math.js 라이브러리를 로드할 수 없습니다. 페이지를 새로고침하거나 인터넷 연결을 확인하세요."
+          );
+          ui.processingStatusLabel.textContent = "오류: math.js 로드 실패";
+        } else {
+          setupMapToImageTransform(); // 줌/이동 시에도 업데이트
+          map.on("zoomend moveend", setupMapToImageTransform);
+        }
+        alert(
+          "페이지 로딩 완료. 지도에서 영역을 선택한 후 분석 버튼을 누르세요."
         );
       });
-      map2.on("sync", function (e) {
-        console.log(
-          "Map 2 SYNC event, master:",
-          e.master,
-          "propagatedFrom:",
-          e.propagatedFrom ? e.propagatedFrom._leaflet_id : "N/A"
-        );
-      });
-
-      console.log(
-        "맵 동기화 설정 완료. map1과 map2는 양방향으로 동기화되어야 합니다."
-      );
-      console.log("map1 Leaflet ID:", map1._leaflet_id);
-      console.log("map2 Leaflet ID:", map2._leaflet_id);
     </script>
   </body>
 </html>

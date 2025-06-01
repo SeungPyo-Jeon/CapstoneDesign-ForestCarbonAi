@@ -204,6 +204,12 @@
         color: black;
         font-size: 11px;
       }
+      .leaflet-image-layer {
+        image-rendering: -moz-crisp-edges; /* Firefox */
+        image-rendering: -webkit-crisp-edges; /* Chrome, Safari (older) */
+        image-rendering: pixelated; /* Chrome, Safari (newer), Edge, Opera */
+        image-rendering: crisp-edges; /* General fallback / SVG */
+      }
       </style>
   </head>
   <body>

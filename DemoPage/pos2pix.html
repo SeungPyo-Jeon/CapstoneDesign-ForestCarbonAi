@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GeoJSON Position to Pixel</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.css"
+    />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.8.0/proj4.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4leaflet/1.0.2/proj4leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/geotiff"></script>
+    <script src="https://unpkg.com/leaflet-distortableimage@0.21.9/dist/leaflet.distortableimage.js"></script>
+    <style>
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      #map {
+        height: 100vh;
+        width: 100%;
+      }
+      #info {
+        position: absolute;
+        top: 10px;
+        left: 50px;
+        background: white;
+        padding: 10px;
+        border-radius: 5px;
+        z-index: 1000;
+        font-family: sans-serif;
+      }
+      /* Leaflet 이미지 레이어에 픽셀화된 렌더링 적용 */
+      .leaflet-image-layer {
+        image-rendering: -moz-crisp-edges; /* Firefox */
+        image-rendering: -webkit-crisp-edges; /* Chrome, Safari (older) */
+        image-rendering: pixelated; /* Chrome, Safari (newer), Edge, Opera */
+        image-rendering: crisp-edges; /* General fallback / SVG */
+      }
+    </style>
+  </head>
+  <body>
+    <div id="map"></div>
+    <div id="info">클릭한 지점의 칸 정보를 여기에 표시합니다.</div>
+
+    <script>
+      // UTM52N 좌표계 정의 (multiMap.js 참고)
+      proj4.defs(
+        "EPSG:32652",
+        "+proj=utm +zone=52 +datum=WGS84 +units=m +no_defs"
+      );
+
+      // 지도 초기화
+      const map = L.map("map", {
+        maxZoom: 20, // 최대 줌 레벨 설정
+      }).setView([36.93, 128.45], 13); // 소백산 근처로 초기 뷰 설정
+
+      // 배경 타일 레이어 추가 (OpenStreetMap)
+      L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        attribution:
+          '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+        maxZoom: 20, // 타일 레이어의 최대 줌 레벨
+        // maxNativeZoom: 19 // OSM의 기본 최대 줌이 19인 경우, 더 확대하면 타일이 흐려지거나 업샘플링됨
+      }).addTo(map);
+
+      let geojsonLayer;
+      let geojsonBounds; // GeoJSON의 경계 (WGS84)
+      let sobaekOriginalCoords = []; // 원본 UTM 좌표 저장
+      let tifImageOverlay; // TIF 이미지 오버레이 레이어
+      let homographyMatrix = null; // 지도 좌표 -> 이미지 픽셀 좌표 변환 행렬
+
+      // GeoJSON 로드 및 처리
+      fetch("./geojson/sobaek_crop.geojson")
+        .then((response) => response.json())
+        .then((data) => {
+          // 원본 UTM 좌표 저장
+          sobaekOriginalCoords = data.features[0].geometry.coordinates[0];
+
+          // UTM 좌표를 WGS84로 변환 (multiMap.js 참고)
+          const wgs84Coords = sobaekOriginalCoords.map((coord) => {
+            const wgs84 = proj4("EPSG:32652", "EPSG:4326", [
+              coord[0],
+              coord[1],
+            ]);
+            return [wgs84[1], wgs84[0]]; // Leaflet은 [위도, 경도] 순서
+          });
+
+          // GeoJSON 파일에서 4개의 꼭짓점만 사용 (명시적으로 4개 점을 사용하라는 요구사항 반영)
+          // sobaek_crop.geojson은 이미 4개의 꼭짓점을 가질 것으로 예상되지만,
+          // 만약 더 많은 점이 있다면, 여기에서 선택 로직이 필요합니다.
+          // 현재는 GeoJSON 파일 자체가 4개의 점으로 구성된 사각형이라고 가정합니다.
+          // 예: 첫번째, (길이/3)번째, (길이*2/3)번째, 마지막에서 두번째 점 등을 선택할 수 있으나,
+          // 여기서는 파일의 4개 점을 그대로 사용합니다.
+          if (wgs84Coords.length < 4) {
+            console.error("GeoJSON 파일에 최소 4개의 좌표가 필요합니다.");
+            return;
+          }
+
+          // Leaflet 폴리곤 생성 (항상 4개의 점 사용)
+          // sobaek_crop.geojson은 일반적으로 5개의 점을 가집니다 (시작점과 끝점이 동일).
+          // 여기서는 명확히 4개의 점을 사용하기 위해 처음 4개 점만 사용합니다.
+          const polygonPoints = [
+            wgs84Coords[0],
+            wgs84Coords[1],
+            wgs84Coords[2],
+            wgs84Coords[3],
+          ];
+
+          geojsonLayer = L.polygon(polygonPoints, { color: "blue" }).addTo(map);
+          map.fitBounds(geojsonLayer.getBounds());
+          geojsonBounds = geojsonLayer.getBounds(); // 변환된 WGS84 좌표 기준 경계
+
+          // 정보창 업데이트
+          document.getElementById("info").innerHTML =
+            "GeoJSON 로드 완료. TIF 로드 중...";
+          const tifPoints = [
+            wgs84Coords[3],
+            wgs84Coords[2],
+            wgs84Coords[0],
+            wgs84Coords[1],
+          ];
+          // GeoJSON 로드 후 TIF 로드 및 중첩
+          loadAndOverlayTif("./tif/DBH/sobaek.tif", tifPoints);
+        })
+        .catch((error) => {
+          console.error("GeoJSON 로드 중 오류 발생:", error);
+          document.getElementById("info").innerHTML = "GeoJSON 로드 실패.";
+        });
+
+      // Helper function to check if a point is inside a polygon (Ray Casting Algorithm)
+      // P: clicked leaflet LatLng {lat, lng}
+      // polygonLatLngs: array of leaflet LatLng objects forming the polygon, e.g., geojsonLayer.getLatLngs()[0]
+      function isPointInPolygon(P, polygonLatLngs) {
+        const x = P.lng,
+          y = P.lat;
+        let inside = false;
+        for (
+          let i = 0, j = polygonLatLngs.length - 1;
+          i < polygonLatLngs.length;
+          j = i++
+        ) {
+          const xi = polygonLatLngs[i].lng,
+            yi = polygonLatLngs[i].lat;
+          const xj = polygonLatLngs[j].lng,
+            yj = polygonLatLngs[j].lat;
+
+          const intersect =
+            yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi;
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      // TIF 로드 및 중첩 함수
+      async function loadAndOverlayTif(tifPath, targetCornersWGS84) {
+        try {
+          const response = await fetch(tifPath);
+          if (!response.ok) {
+            throw new Error(`TIF 파일 로드 실패: ${response.statusText}`);
+          }
+          const arrayBuffer = await response.arrayBuffer();
+          const tiff = await GeoTIFF.fromArrayBuffer(arrayBuffer);
+          const image = await tiff.getImage(); // 첫 번째 이미지 사용
+          const rasters = await image.readRasters(); // 모든 밴드 읽기
+          const width = image.getWidth();
+          const height = image.getHeight();
+
+          // 간단한 단일 밴드 회색조 이미지 데이터 생성 (canvas 사용)
+          const canvas = document.createElement("canvas");
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext("2d");
+
+          // Canvas 이미지 스무딩 비활성화 (픽셀 선명도 향상)
+          ctx.imageSmoothingEnabled = false;
+          ctx.mozImageSmoothingEnabled = false; // Firefox
+          ctx.webkitImageSmoothingEnabled = false; // Chrome, Safari
+          ctx.msImageSmoothingEnabled = false; // IE, Edge
+
+          const imageData = ctx.createImageData(width, height);
+          const data = imageData.data; // RGBA 순서
+
+          const tiepoint = image.getTiePoints()[0];
+          const pixelScale = image.getFileDirectory().ModelPixelScale;
+
+          // TIF 데이터에서 최소/최대 값을 찾아 정규화 (옵션, 시각화 개선용)
+          // 여기서는 GeoTIFF의 데이터 타입을 확인하고 그에 맞게 처리해야 합니다.
+          // 단순화를 위해, 픽셀 값을 0-255 범위로 직접 매핑하거나 클리핑합니다.
+          // 예시: 첫 번째 밴드(rasters[0]) 사용
+          const tifData = rasters[0]; // 첫 번째 밴드의 데이터 배열
+          let minVal = Infinity,
+            maxVal = -Infinity;
+          for (let i = 0; i < tifData.length; i++) {
+            if (tifData[i] < minVal) minVal = tifData[i];
+            if (tifData[i] > maxVal) maxVal = tifData[i];
+          }
+
+          for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+              const i = y * width + x;
+              const pixelValue = tifData[i]; // TIF 픽셀 값
+              // 값을 0-255 범위로 정규화 또는 클리핑 (단순 예시)
+              let gray = Math.floor(
+                ((pixelValue - minVal) / (maxVal - minVal)) * 255
+              );
+              gray = Math.max(0, Math.min(255, gray)); // 0-255 범위로 클램핑
+              if (isNaN(gray)) gray = 0; // 데이터 없는 부분은 검은색
+
+              const dataIndex = i * 4;
+              data[dataIndex] = gray; // R
+              data[dataIndex + 1] = gray; // G
+              data[dataIndex + 2] = gray; // B
+              data[dataIndex + 3] = 255; // A (불투명)
+            }
+          }
+          ctx.putImageData(imageData, 0, 0);
+          const imageUrl = canvas.toDataURL(); // 생성된 이미지의 data URL
+
+          const cornersForOverlay = targetCornersWGS84.map((coord) =>
+            L.latLng(coord[0], coord[1])
+          );
+
+          if (tifImageOverlay) {
+            map.removeLayer(tifImageOverlay);
+          }
+
+          tifImageOverlay = L.distortableImageOverlay(imageUrl, {
+            corners: cornersForOverlay,
+            opacity: 0.7,
+            actions: [],
+          }).addTo(map);
+
+          // Homography 행렬 계산
+          const mapGeoCorners = tifImageOverlay.getCorners(); // Leaflet LatLng 객체들
+          const srcPoints = mapGeoCorners.map((p) => [p.lng, p.lat]); // 지도 좌표 [[lng,lat], ...]
+
+          const dstPoints = [
+            // 이미지 픽셀 좌표 [[col,row], ...]
+            [0, 0], // TL
+            [3600, 0], // TR
+            [0, 3600], // BL
+            [3600, 3600], // BR
+          ];
+
+          // 중요: srcPoints (mapGeoCorners)의 순서가 TL, TR, BL, BR 이어야 합니다.
+          // Leaflet.DistortableImage.getCorners()가 이 순서를 반환한다고 가정합니다.
+
+          homographyMatrix = computeHomographyMatrix(srcPoints, dstPoints);
+
+          if (!homographyMatrix) {
+            console.error("Homography matrix calculation failed.");
+            document.getElementById("info").innerHTML =
+              "변환 행렬 계산 실패. 클릭 좌표 변환 불가.";
+          } else {
+            console.log("Homography matrix calculated:", homographyMatrix);
+            document.getElementById("info").innerHTML =
+              "GeoJSON 및 TIF 로드 완료. 변환 행렬 계산 완료. 지도에서 위치를 클릭하세요.";
+          }
+        } catch (error) {
+          console.error("TIF 로드 및 중첩 중 오류 발생:", error);
+          document.getElementById(
+            "info"
+          ).innerHTML = `TIF 로드 실패: ${error.message}`;
+        }
+      }
+
+      // --- Homography 관련 함수들 ---
+      function solveLinearSystem(A, b) {
+        // Solves Ax = b using Gaussian elimination
+        const n = A.length;
+        for (let i = 0; i < n; i++) {
+          // Augment A with b
+          A[i].push(b[i]);
+        }
+
+        for (let i = 0; i < n; i++) {
+          // Pivot for A[i][i]
+          let maxRow = i;
+          for (let k = i + 1; k < n; k++) {
+            if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
+              maxRow = k;
+            }
+          }
+          [A[i], A[maxRow]] = [A[maxRow], A[i]]; // Swap rows
+
+          if (Math.abs(A[i][i]) < 1e-12) return null; // Singular matrix
+
+          // Normalize row i
+          for (let k = i + 1; k < n + 1; k++) {
+            A[i][k] /= A[i][i];
+          }
+          A[i][i] = 1; // Set pivot to 1 (though already done by division)
+
+          // Eliminate other rows
+          for (let k = 0; k < n; k++) {
+            if (k !== i) {
+              const factor = A[k][i];
+              for (let j = i; j < n + 1; j++) {
+                A[k][j] -= factor * A[i][j];
+              }
+            }
+          }
+        }
+
+        const x = new Array(n);
+        for (let i = 0; i < n; i++) {
+          x[i] = A[i][n];
+        }
+        return x;
+      }
+
+      function computeHomographyMatrix(srcPoints, dstPoints) {
+        if (srcPoints.length !== 4 || dstPoints.length !== 4) {
+          throw new Error("Need 4 corresponding points for homography.");
+        }
+
+        const A = [];
+        const b = [];
+
+        for (let i = 0; i < 4; i++) {
+          const x_map = srcPoints[i][0]; // lng
+          const y_map = srcPoints[i][1]; // lat
+          const x_img = dstPoints[i][0]; // col
+          const y_img = dstPoints[i][1]; // row
+
+          A.push([x_map, y_map, 1, 0, 0, 0, -x_img * x_map, -x_img * y_map]);
+          b.push(x_img);
+
+          A.push([0, 0, 0, x_map, y_map, 1, -y_img * x_map, -y_img * y_map]);
+          b.push(y_img);
+        }
+
+        const h_vector = solveLinearSystem(A, b); // Solve Ah = b for h = [h11,h12,h13,h21,h22,h23,h31,h32]
+
+        if (!h_vector || h_vector.length !== 8) {
+          console.error("Failed to solve for homography parameters.", h_vector);
+          return null;
+        }
+
+        // Reconstruct the 3x3 homography matrix (h33 = 1)
+        const H = [
+          [h_vector[0], h_vector[1], h_vector[2]],
+          [h_vector[3], h_vector[4], h_vector[5]],
+          [h_vector[6], h_vector[7], 1.0],
+        ];
+        return H;
+      }
+
+      // 지도 클릭 이벤트 핸들러
+      map.on("click", function (e) {
+        if (!geojsonLayer || !tifImageOverlay || !homographyMatrix) {
+          document.getElementById("info").innerHTML =
+            "GeoJSON, TIF 레이어 또는 변환 행렬이 준비되지 않았습니다.";
+          return;
+        }
+
+        const clickedLatlng = e.latlng;
+
+        // 1. Check if the click is within the GeoJSON polygon first
+        const polygonCoordinates = geojsonLayer.getLatLngs()[0]; // Assumes a simple polygon, not multi-polygon
+        if (isPointInPolygon(clickedLatlng, polygonCoordinates)) {
+          const P_map = [clickedLatlng.lng, clickedLatlng.lat, 1]; // Homogeneous coordinates
+
+          // Apply homography: P_img_h = homographyMatrix * P_map
+          const P_img_h = [
+            homographyMatrix[0][0] * P_map[0] +
+              homographyMatrix[0][1] * P_map[1] +
+              homographyMatrix[0][2] * P_map[2],
+            homographyMatrix[1][0] * P_map[0] +
+              homographyMatrix[1][1] * P_map[1] +
+              homographyMatrix[1][2] * P_map[2],
+            homographyMatrix[2][0] * P_map[0] +
+              homographyMatrix[2][1] * P_map[1] +
+              homographyMatrix[2][2] * P_map[2],
+          ];
+
+          let u_img_raw = -1,
+            v_img_raw = -1;
+          if (Math.abs(P_img_h[2]) > 1e-9) {
+            u_img_raw = P_img_h[0] / P_img_h[2];
+            v_img_raw = P_img_h[1] / P_img_h[2];
+          } else {
+            document.getElementById("info").innerHTML =
+              "변환 중 w_h가 0에 가까워 계산 오류 발생.";
+            return;
+          }
+
+          // Add a small epsilon to counteract floating point inaccuracies near the max boundary
+          // before flooring. This helps ensure that values very close to 3599.0 (e.g., 3598.9999999999)
+          // get floored to 3599 if they are conceptually at the edge.
+          const epsilon = 1e-9;
+          u_img_raw += epsilon;
+          v_img_raw += epsilon;
+
+          const colX = Math.floor(u_img_raw);
+          const gridY = Math.floor(v_img_raw);
+
+          const finalColX = Math.min(3599, Math.max(0, colX));
+          const finalGridY = Math.min(3599, Math.max(0, gridY));
+
+          // Check if the calculated pixel coordinates are within the image [0-3599] range as an additional filter
+          // This can help if the homography maps points outside the GeoJSON (but within its bounding box)
+          // to pixels outside the 0-3599 image range.
+          if (
+            u_img_raw >= -0.5 &&
+            u_img_raw < 3600.5 &&
+            v_img_raw >= -0.5 &&
+            v_img_raw < 3600.5
+          ) {
+            // Allow for Math.floor rounding
+            const u_norm = u_img_raw / 3599.0;
+            const v_norm = v_img_raw / 3599.0;
+            document.getElementById("info").innerHTML =
+              `클릭한 위치: ${clickedLatlng.lat.toFixed(
+                5
+              )}, ${clickedLatlng.lng.toFixed(5)}<br>` +
+              `이미지 좌표(raw): u=${u_img_raw.toFixed(
+                3
+              )}, v=${v_img_raw.toFixed(3)}<br>` +
+              `정규화(u,v): u=${u_norm.toFixed(8)}, v=${v_norm.toFixed(
+                8
+              )}<br>` +
+              `칸 위치 (0-indexed, 좌상단 기준): X = ${finalColX}, Y = ${finalGridY}`;
+          } else {
+            document.getElementById("info").innerHTML =
+              "클릭 지점이 GeoJSON 내에 있으나, 계산된 픽셀이 이미지 범위를 벗어납니다.";
+          }
+        } else {
+          document.getElementById("info").innerHTML =
+            "클릭한 지점이 GeoJSON 영역 외부에 있습니다.";
+        }
+      });
+    </script>
+  </body>
+</html>

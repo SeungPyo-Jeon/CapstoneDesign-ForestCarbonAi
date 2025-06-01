@@ -13,6 +13,88 @@ let mapInstances = {}; // 모든 맵 인스턴스를 저장할 객체 (전역으
 // proj4 초기화 및 좌표계 정의
 proj4.defs("EPSG:32652", "+proj=utm +zone=52 +datum=WGS84 +units=m +no_defs");
 
+// --- Homography 관련 함수들 (pos2pix.html에서 가져옴) ---
+function solveLinearSystem(A, b) {
+    // Solves Ax = b using Gaussian elimination
+    const n = A.length;
+    for (let i = 0; i < n; i++) {
+        // Augment A with b
+        A[i].push(b[i]);
+    }
+
+    for (let i = 0; i < n; i++) {
+        // Pivot for A[i][i]
+        let maxRow = i;
+        for (let k = i + 1; k < n; k++) {
+            if (Math.abs(A[k][i]) > Math.abs(A[maxRow][i])) {
+                maxRow = k;
+            }
+        }
+        [A[i], A[maxRow]] = [A[maxRow], A[i]]; // Swap rows
+
+        if (Math.abs(A[i][i]) < 1e-12) return null; // Singular matrix
+
+        // Normalize row i
+        for (let k = i + 1; k < n + 1; k++) {
+            A[i][k] /= A[i][i];
+        }
+        A[i][i] = 1; // Set pivot to 1 (though already done by division)
+
+        // Eliminate other rows
+        for (let k = 0; k < n; k++) {
+            if (k !== i) {
+                const factor = A[k][i];
+                for (let j = i; j < n + 1; j++) {
+                    A[k][j] -= factor * A[i][j];
+                }
+            }
+        }
+    }
+
+    const x = new Array(n);
+    for (let i = 0; i < n; i++) {
+        x[i] = A[i][n];
+    }
+    return x;
+}
+
+function computeHomographyMatrix(srcPoints, dstPoints) {
+    if (srcPoints.length !== 4 || dstPoints.length !== 4) {
+        throw new Error("Need 4 corresponding points for homography.");
+    }
+
+    const A = [];
+    const b = [];
+
+    for (let i = 0; i < 4; i++) {
+        const x_map = srcPoints[i][0]; // lng
+        const y_map = srcPoints[i][1]; // lat
+        const x_img = dstPoints[i][0]; // col
+        const y_img = dstPoints[i][1]; // row
+
+        A.push([x_map, y_map, 1, 0, 0, 0, -x_img * x_map, -x_img * y_map]);
+        b.push(x_img);
+
+        A.push([0, 0, 0, x_map, y_map, 1, -y_img * x_map, -y_img * y_map]);
+        b.push(y_img);
+    }
+
+    const h_vector = solveLinearSystem(A, b); // Solve Ah = b for h = [h11,h12,h13,h21,h22,h23,h31,h32]
+
+    if (!h_vector || h_vector.length !== 8) {
+        console.error("Failed to solve for homography parameters.", h_vector);
+        return null;
+    }
+
+    // Reconstruct the 3x3 homography matrix (h33 = 1)
+    const H = [
+        [h_vector[0], h_vector[1], h_vector[2]],
+        [h_vector[3], h_vector[4], h_vector[5]],
+        [h_vector[6], h_vector[7], 1.0],
+    ];
+    return H;
+}
+
 async function loadGeoJSON() {
     try {
             const response_jiri = await fetch(geojson_jiri);
@@ -99,12 +181,25 @@ class MapInstance {
         this.mapClickHandlerAttached = false; // 맵 클릭 핸들러 추가 여부 플래그
         this.drawnRectangle = null; // 각 맵 인스턴스에 그려진 사각형 저장
         this.outsideOverlay = null; // 선택 영역 바깥을 어둡게 처리하는 레이어
+
+        // Homography 관련
+        this.imagePixelWidth = 3600; // TIF 이미지의 픽셀 너비 (가정)
+        this.imagePixelHeight = 3600; // TIF 이미지의 픽셀 높이 (가정)
+        this.homographyMatrix_jiri_1 = null;
+        this.homographyMatrix_jiri_2 = null;
+        this.homographyMatrix_sobaek = null;
+
+        this.invHomography_jiri_1 = null; // 역 Homography 행렬 추가
+        this.invHomography_jiri_2 = null;
+        this.invHomography_sobaek = null;
+
         this.initMap();
     }
     initMap() {
         this.map = L.map(this.mapId, {
             center: [37.5665, 126.9780], // 서울 중심 좌표
             zoom: 13,
+            maxZoom: 22, // 최대 줌 레벨 증가
             zoomControl: false,
             attributionControl: false,
             offsetHeight: 1
@@ -115,13 +210,15 @@ class MapInstance {
             'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
             { 
                 //attribution: '© OpenStreetMap contributors'
-
+                maxZoom: 22, // 타일 레이어의 최대 줌 레벨 증가
+                maxNativeZoom: 19 // OSM의 일반적인 네이티브 최대 줌
           }).addTo(this.map);
         // Esri WorldImagery 타일 레이어 추가
         L.tileLayer(
         "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         { 
             // attribution: '© Esri'
+            maxZoom: 22 // 타일 레이어의 최대 줌 레벨 증가
          }).addTo(this.map);
         this.setImageBounds(this.points);
         //if (this.tifUrl == 'height'){
@@ -131,6 +228,9 @@ class MapInstance {
         
     }
     setImageBounds(points){
+        //L.polygon(points["jiri_1"], { color: "blue" }).addTo(this.map);
+        //L.polygon(points["jiri_2"], { color: "red" }).addTo(this.map);
+
         this.imageBounds_jiri_1 = [
             L.latLng(points["jiri_1"][3].lat, points["jiri_1"][3].lng),
                     L.latLng(points["jiri_1"][2].lat, points["jiri_1"][2].lng),
@@ -218,6 +318,67 @@ class MapInstance {
                 actions: [] 
              }).addTo(this.map);
 
+        // Homography 행렬 계산
+        const dstPoints = [
+            [0, 0], // TL pixel
+            [this.imagePixelWidth, 0], // TR pixel
+            [0, this.imagePixelHeight], // BL pixel
+            [this.imagePixelWidth, this.imagePixelHeight] // BR pixel
+        ];
+
+        if (this.currentTifLayer_jiri_1) {
+            try {
+                const mapGeoCorners = this.currentTifLayer_jiri_1.getCorners();
+                //L.polygon(mapGeoCorners, { color: "blue" }).addTo(this.map);
+                //console.log('mapGeoCorners',mapGeoCorners);
+                const srcPoints = mapGeoCorners.map(p => [p.lng, p.lat]);
+                this.homographyMatrix_jiri_1 = computeHomographyMatrix(srcPoints, dstPoints);
+                if (!this.homographyMatrix_jiri_1) console.error(`Homography matrix calculation failed for jiri_1 on map ${this.mapId}.`);
+                else {
+                    try {
+                        this.invHomography_jiri_1 = math.inv(this.homographyMatrix_jiri_1);
+                    } catch (e) {
+                        console.error(`Error inverting homography for jiri_1: ${e}`);
+                        this.invHomography_jiri_1 = null;
+                    }
+                }
+            } catch (e) { console.error(`Error calculating homography for jiri_1: ${e}`); this.homographyMatrix_jiri_1 = null; this.invHomography_jiri_1 = null;}
+        }
+        if (this.currentTifLayer_jiri_2) {
+            try {
+                const mapGeoCorners = this.currentTifLayer_jiri_2.getCorners();
+                //L.polygon(mapGeoCorners, { color: "blue" }).addTo(this.map);
+                //console.log('mapGeoCorners',mapGeoCorners);
+                const srcPoints = mapGeoCorners.map(p => [p.lng, p.lat]);
+                this.homographyMatrix_jiri_2 = computeHomographyMatrix(srcPoints, dstPoints);
+                if (!this.homographyMatrix_jiri_2) console.error(`Homography matrix calculation failed for jiri_2 on map ${this.mapId}.`);
+                else {
+                    try {
+                        this.invHomography_jiri_2 = math.inv(this.homographyMatrix_jiri_2);
+                    } catch (e) {
+                        console.error(`Error inverting homography for jiri_2: ${e}`);
+                        this.invHomography_jiri_2 = null;
+                    }
+                }
+            } catch (e) { console.error(`Error calculating homography for jiri_2: ${e}`); this.homographyMatrix_jiri_2 = null; this.invHomography_jiri_2 = null;}
+        }
+        if (this.currentTifLayer_sobaek) {
+             try {
+                const mapGeoCorners = this.currentTifLayer_sobaek.getCorners();
+                const srcPoints = mapGeoCorners.map(p => [p.lng, p.lat]);
+                this.homographyMatrix_sobaek = computeHomographyMatrix(srcPoints, dstPoints);
+                if (!this.homographyMatrix_sobaek) console.error(`Homography matrix calculation failed for sobaek on map ${this.mapId}.`);
+                else {
+                    try {
+                        this.invHomography_sobaek = math.inv(this.homographyMatrix_sobaek);
+                    } catch (e) {
+                        console.error(`Error inverting homography for sobaek: ${e}`);
+                        this.invHomography_sobaek = null;
+                    }
+                }
+            } catch (e) { console.error(`Error calculating homography for sobaek: ${e}`); this.homographyMatrix_sobaek = null; this.invHomography_sobaek = null;}
+        }
+
         // 통합 맵 클릭 핸들러 추가 (한 번만)
         if (!this.mapClickHandlerAttached) {
             this.map.on('click', (e) => {
@@ -260,13 +421,16 @@ class MapInstance {
     }
 
     determineRegionForLatLng(latlng) {
-        if (this.currentTifLayer_sobaek && this.currentTifLayer_sobaek.getBounds().contains(latlng)) {
+        if (this.currentTifLayer_sobaek && L.latLngBounds(this.points["sobaek"]).contains(latlng)) {
+            console.log('sobaek', L.latLngBounds(this.points["sobaek"]));
             return 'sobaek';
-        } else if (this.currentTifLayer_jiri_1 && this.currentTifLayer_jiri_1.getBounds().contains(latlng)) {
-            return 'jiri_1';
-        } else if (this.currentTifLayer_jiri_2 && this.currentTifLayer_jiri_2.getBounds().contains(latlng)) {
+        } else if (this.currentTifLayer_jiri_2 && L.latLngBounds(this.points["jiri_2"]).contains(latlng)) {
+            console.log('jiri_2', L.latLngBounds(this.points["jiri_2"]));
             return 'jiri_2';
-        }
+        }else if (this.currentTifLayer_jiri_1 && L.latLngBounds(this.points["jiri_1"]).contains(latlng)) {
+            console.log('jiri_1', L.latLngBounds(this.points["jiri_1"]));
+            return 'jiri_1';
+        } 
         // Fallback to imageBounds if layers are not yet fully initialized or for other checks
         if (this.imageBounds_sobaek && L.latLngBounds(this.imageBounds_sobaek).contains(latlng)) {
              return 'sobaek';
@@ -283,40 +447,60 @@ class MapInstance {
     async getPixelValueAtLatLng(latlng, targetRegion) {
         if (!targetRegion) return null;
 
+        let homographyMatrix = null;
+        let currentImageRaster = null;
+
+        if (targetRegion === 'jiri_1') {
+            homographyMatrix = this.homographyMatrix_jiri_1;
+            currentImageRaster = this.imageRaster_jiri_1;
+        } else if (targetRegion === 'jiri_2') {
+            homographyMatrix = this.homographyMatrix_jiri_2;
+            currentImageRaster = this.imageRaster_jiri_2;
+        } else if (targetRegion === 'sobaek') {
+            homographyMatrix = this.homographyMatrix_sobaek;
+            currentImageRaster = this.imageRaster_sobaek;
+        }
+
+        if (!homographyMatrix) {
+            console.warn(`Homography matrix not available for ${targetRegion} on map ${this.mapId}. Cannot get pixel value.`);
+            return null;
+        }
+        if (!currentImageRaster || !currentImageRaster[0]) {
+            console.warn(`Image raster not available for ${targetRegion} on map ${this.mapId}. Cannot get pixel value.`);
+            return null;
+        }
+
         try {
-            let rasters = null;
-            if (targetRegion == 'jiri_1'){
-                rasters = this.imageRaster_jiri_1;
-            } else if (targetRegion == 'jiri_2'){
-                rasters = this.imageRaster_jiri_2;
-            } else if (targetRegion == 'sobaek'){
-                rasters = this.imageRaster_sobaek;
-            }
-            // Use the specific bounds for the targetRegion of this map instance
-            const currentRegionBounds = this.points[targetRegion]; 
-            if (!currentRegionBounds || currentRegionBounds.length < 4) {
-                console.error("Bounds for region", targetRegion, "not found or invalid in this.points");
+            const P_map = [latlng.lng, latlng.lat, 1]; // Homogeneous coordinates for map point [lng, lat, 1]
+
+            // Apply homography: P_img_h = H * P_map
+            const P_img_h = [
+                homographyMatrix[0][0] * P_map[0] + homographyMatrix[0][1] * P_map[1] + homographyMatrix[0][2] * P_map[2],
+                homographyMatrix[1][0] * P_map[0] + homographyMatrix[1][1] * P_map[1] + homographyMatrix[1][2] * P_map[2],
+                homographyMatrix[2][0] * P_map[0] + homographyMatrix[2][1] * P_map[1] + homographyMatrix[2][2] * P_map[2],
+            ];
+
+            let u_img_raw = -1, v_img_raw = -1; // u_img_raw is column (X), v_img_raw is row (Y)
+            if (Math.abs(P_img_h[2]) > 1e-9) { // Avoid division by zero or very small w_h
+                u_img_raw = P_img_h[0] / P_img_h[2];
+                v_img_raw = P_img_h[1] / P_img_h[2];
+            } else {
+                console.error("Transformed w_h (P_img_h[2]) is close to zero, cannot compute pixel coordinates for", latlng);
                 return null;
             }
+            
+            const colX = Math.floor(u_img_raw);
+            const rowY = Math.floor(v_img_raw);
 
-            const minLat = Math.min(currentRegionBounds[0].lat, currentRegionBounds[1].lat, currentRegionBounds[2].lat, currentRegionBounds[3].lat);
-            const maxLat = Math.max(currentRegionBounds[0].lat, currentRegionBounds[1].lat, currentRegionBounds[2].lat, currentRegionBounds[3].lat);
-            const minLng = Math.min(currentRegionBounds[0].lng, currentRegionBounds[1].lng, currentRegionBounds[2].lng, currentRegionBounds[3].lng);
-            const maxLng = Math.max(currentRegionBounds[0].lng, currentRegionBounds[1].lng, currentRegionBounds[2].lng, currentRegionBounds[3].lng);
-            
-            // Assuming TIF image dimensions are consistently 3600x3600 as per previous user edits
-            const width = 3600; 
-            const height = 3600;
-            
-            const x = Math.floor((latlng.lng - minLng) / (maxLng - minLng) * width);
-            const y = Math.floor((maxLat - latlng.lat) / (maxLat - minLat) * height);
-            
-            if (x >= 0 && x < width && y >= 0 && y < height && rasters[0] && rasters[0][y * width + x] !== undefined) {
-                return rasters[0][y * width + x];
+            if (colX >= 0 && colX < this.imagePixelWidth && 
+                rowY >= 0 && rowY < this.imagePixelHeight &&
+                currentImageRaster[0][rowY * this.imagePixelWidth + colX] !== undefined) {
+                return currentImageRaster[0][rowY * this.imagePixelWidth + colX];
             }
-            return null; // Value not found or out of bounds
+            // console.warn(`Calculated pixel (col:${colX}, row:${rowY}) for latlng (${latlng.lat}, ${latlng.lng}) is out of image bounds (${this.imagePixelWidth}x${this.imagePixelHeight}) or raster data not found for ${targetRegion}. Raw (u,v): (${u_img_raw}, ${v_img_raw})`);
+            return null; 
         } catch (error) {
-            console.error(`Error getting pixel value for ${this.mapId} at ${targetRegion}:`, error);
+            console.error(`Error getting pixel value using homography for ${this.mapId} at ${targetRegion} for latlng (${latlng.lat}, ${latlng.lng}):`, error);
             return null;
         }
     }
@@ -349,13 +533,48 @@ class MapInstance {
         if (this.currentMarker) {
             this.map.removeLayer(this.currentMarker);
         }
-        
-        // 새 마커 추가
-        this.currentMarker = L.marker(latlng)
-            .bindPopup(`값: ${value}`)
+        console.log(this.tifUrl);
+
+        let popupContent = '';
+        let iconHtml = '';
+        let iconColor = '#007bff'; // 기본 아이콘 색상 (파란색 계열)
+
+        if (this.tifUrl === 'species') {
+            // tree_color_map 변수가 현재 코드에 없어 value를 직접 사용합니다.
+            // tree_color_map이 있다면 tree_color_map[value]로 변경해주세요.
+            popupContent = `수종: <strong>${tree_color_map[value]}</strong>`;
+            iconHtml = `<div style="font-size: 12px; font-weight: bold; color: white;">${value}</div>`;
+            iconColor = '#28a745'; // 수종은 초록색 계열
+        } else if (this.tifUrl === 'height') {
+            popupContent = `높이: <strong>${value.toFixed(2)}m</strong>`;
+            iconHtml = `<div style="font-size: 12px; font-weight: bold; color: white;">H</div>`;
+            iconColor = '#ffc107'; // 높이는 노란색 계열
+        } else if (this.tifUrl === 'DBH') {
+            popupContent = `흉고직경: <strong>${value.toFixed(2)}cm</strong>`;
+            iconHtml = `<div style="font-size: 12px; font-weight: bold; color: white;">D</div>`;
+            iconColor = '#17a2b8'; // DBH는 청록색 계열
+        } else if (this.tifUrl === 'carbon') {
+            popupContent = `탄소저장량: <strong>${value.toFixed(2)}kg</strong>`;
+            iconHtml = `<div style="font-size: 10px; font-weight: bold; color: white;">C</div>`; // 텍스트 크기 조절
+            iconColor = '#6f42c1'; // 탄소는 보라색 계열
+        }
+
+        const customIcon = L.divIcon({
+            className: 'custom-div-icon',
+            html: '',//`<div style="background-color:${iconColor}; width:30px; height:30px; border-radius:50%; display:flex; justify-content:center; align-items:center; box-shadow: 0 2px 5px rgba(0,0,0,0.2);">${iconHtml}</div>`,
+            iconSize: [0, 0],//[30, 30],
+            iconAnchor: [0, 0], // 아이콘 중심점//[15, 15]
+            popupAnchor: [0, 0] // 팝업 위치 (아이콘 위쪽)//[0, -15]
+        });
+
+        this.currentMarker = L.marker(latlng, { 
+            icon: customIcon 
+        })
+            .bindPopup(popupContent)
             .addTo(this.map)
             .openPopup();
-        console.log('Marker shown at:', latlng, 'with value:', value, 'on map:', this.mapId);
+
+        console.log('Marker shown at:', latlng, 'with value:', value, 'on map:', this.tifUrl);
     }
 
     // height 타입에만 사용
@@ -471,36 +690,67 @@ class MapInstance {
         }
     }
 
-    async getValuesInBounds(bounds, sampleStep = 10) {
+    async getValuesInBounds(bounds) {
         const values = [];
-        const latLngsToSample = [];
+        const processedPixels = new Set(); 
 
-        // 바운딩 박스 내에서 샘플링할 좌표 생성
-        const northEast = bounds.getNorthEast();
-        const southWest = bounds.getSouthWest();
+        console.log(`[${this.mapId}] Starting getValuesInBounds for bounds:`, bounds);
 
-        for (let lat = southWest.lat; lat <= northEast.lat; lat += (northEast.lat - southWest.lat) / sampleStep) {
-            for (let lng = southWest.lng; lng <= northEast.lng; lng += (northEast.lng - southWest.lng) / sampleStep) {
-                latLngsToSample.push(L.latLng(lat, lng));
+        const regions = [
+            { name: 'jiri_1', invHomography: this.invHomography_jiri_1, raster: this.imageRaster_jiri_1, layer: this.currentTifLayer_jiri_1 },
+            { name: 'jiri_2', invHomography: this.invHomography_jiri_2, raster: this.imageRaster_jiri_2, layer: this.currentTifLayer_jiri_2 },
+            { name: 'sobaek', invHomography: this.invHomography_sobaek, raster: this.imageRaster_sobaek, layer: this.currentTifLayer_sobaek }
+        ];
+
+        for (const region of regions) {
+            console.log(`[${this.mapId}] Processing region: ${region.name}`);
+            if (!region.invHomography || !region.raster || !region.raster[0] || !region.layer) {
+                console.warn(`[${this.mapId}] Skipping region ${region.name} due to missing data (invHomography: ${!!region.invHomography}, raster: ${!!region.raster && !!region.raster[0]}, layer: ${!!region.layer})`);
+                continue;
             }
-        }
-        if (latLngsToSample.length > 5000) { // 너무 많은 샘플 방지 (최대 5000개)
-            console.warn("Too many samples requested, limiting to 5000 points for performance.");
-            // 샘플링 간격 조정 또는 사용자에게 알림
-            // 여기서는 단순화를 위해 처음 5000개만 사용하도록 제한하거나, sampleStep을 동적으로 늘릴 수 있습니다.
-            // 혹은 사용자에게 경고 후 일부만 처리
-        }
 
-        for (const latlng of latLngsToSample.slice(0, 5000)) {
-            const region = this.determineRegionForLatLng(latlng);
-            if (region) {
-                const value = await this.getPixelValueAtLatLng(latlng, region);
-                if (value !== null && value !== undefined && value !== -9999 && value !== 9999) { // 유효한 값만 추가 (TIF의 NoData 값 제외)
-                    values.push(value);
+            const regionBounds = region.layer.getBounds();
+            console.log(`[${this.mapId}] Region ${region.name} bounds:`, regionBounds);
+            if (!bounds.intersects(regionBounds)) {
+                console.log(`[${this.mapId}] Selected bounds do not intersect with ${region.name} layer. Skipping pixel iteration.`);
+                continue;
+            }
+            console.log(`[${this.mapId}] Selected bounds INTERSECT with ${region.name} layer. Starting pixel iteration.`);
+
+            const imageWidth = this.imagePixelWidth;
+            const imageHeight = this.imagePixelHeight;
+            const rasterData = region.raster[0];
+            let pixelsFromThisRegion = 0;
+
+            for (let r = 0; r < imageHeight; r++) { 
+                for (let c = 0; c < imageWidth; c++) { 
+                    const pixelKey = `${this.mapId}_${region.name}_${c}_${r}`;
+                    const P_img = [c + 0.5, r + 0.5, 1];
+                    const P_map_h = [
+                        region.invHomography[0][0] * P_img[0] + region.invHomography[0][1] * P_img[1] + region.invHomography[0][2] * P_img[2],
+                        region.invHomography[1][0] * P_img[0] + region.invHomography[1][1] * P_img[1] + region.invHomography[1][2] * P_img[2],
+                        region.invHomography[2][0] * P_img[0] + region.invHomography[2][1] * P_img[1] + region.invHomography[2][2] * P_img[2],
+                    ];
+
+                    if (Math.abs(P_map_h[2]) > 1e-9) { 
+                        const lng = P_map_h[0] / P_map_h[2];
+                        const lat = P_map_h[1] / P_map_h[2];
+                        
+                        if (bounds.contains(L.latLng(lat, lng))) {
+                            const pixelValue = rasterData[r * imageWidth + c];
+                            if (pixelValue !== null && pixelValue !== undefined && pixelValue !== -9999 && pixelValue !== 9999) { 
+                                values.push(pixelValue);
+                                pixelsFromThisRegion++;
+                            }
+                        }
+                    } else {
+                        // console.warn(`[${this.mapId}] Transformed w_h near zero for pixel (${c},${r}) in region ${region.name}`);
+                    }
                 }
             }
+            console.log(`[${this.mapId}] Collected ${pixelsFromThisRegion} pixels from region ${region.name}. Total values so far: ${values.length}`);
         }
-        console.log(`[${this.mapId}] Sampled ${values.length} values from bounds.`);
+        console.log(`[${this.mapId}] Finished getValuesInBounds. Total collected values: ${values.length}`);
         return values;
     }
 }
@@ -517,7 +767,7 @@ async function collectAndDisplayStatistics(bounds) {
 
     for (const mapId in mapInstances) {
         const instance = mapInstances[mapId];
-        const values = await instance.getValuesInBounds(bounds, 20); // sampleStep 늘려서 샘플 수 줄임 (성능)
+        const values = await instance.getValuesInBounds(bounds);
         if (values.length > 0) {
             allMapStats[mapId] = calculateStatistics(values, instance.tifUrl);
         } else {
@@ -583,6 +833,11 @@ function calculateStatistics(values, mapType) {
 
 function displayStatisticsCharts(allMapStats) {
     const statContainer = document.getElementById('statContainer');
+    const summary = document.createElement('p');
+    summary.innerHTML = `
+            개수: ${allMapStats['dbh'].count*2.5*2.5   }m<sup>2</sup>
+        `;
+    statContainer.appendChild(summary);
 
     for (const mapId in allMapStats) {
         const stats = allMapStats[mapId];
@@ -591,7 +846,7 @@ function displayStatisticsCharts(allMapStats) {
         const chartDiv = document.createElement('div');
         chartDiv.style.marginBottom = '20px';
         const title = document.createElement('h4');
-        title.textContent = `${mapInstance.tifUrl.toUpperCase()} 통계`; // mapId 대신 tifUrl 사용
+        title.textContent = `${mapInstance.tifUrl} 통계`; // mapId 대신 tifUrl 사용
         chartDiv.appendChild(title);
 
         if (!stats) {
@@ -608,34 +863,98 @@ function displayStatisticsCharts(allMapStats) {
         statContainer.appendChild(chartDiv);
 
         const ctx = canvas.getContext('2d');
-
+        
         if (stats.type === 'categorical') {
             // 수종: 막대 차트
-            const labels = Object.keys(stats.counts);
-            const data = Object.values(stats.counts);
+            const sortedCounts = Object.entries(stats.counts).sort((a, b) => b[1] - a[1]);
+            const labels = sortedCounts.map(entry => entry[0]);
+            const data = sortedCounts.map(entry => entry[1]);
+
             statisticsCharts[mapId] = new Chart(ctx, {
                 type: 'bar',
                 data: {
-                    labels: labels.map(label => `수종 ${label}`), // 수종 코드에 이름 매핑 필요시 추가
+                    labels: labels.map(label => tree_color_map[label]), // 수종 코드에 이름 매핑 필요시 추가
                     datasets: [{
                         label: '빈도수',
                         data: data,
                         backgroundColor: 'rgba(75, 192, 192, 0.6)'
                     }]
+                    
                 },
-                options: { scales: { y: { beginAtZero: true } } }
+                options: {
+                    //scales: { y: { beginAtZero: true } },
+                    //responsive: true,
+                    //maintainAspectRatio: false,
+                    scales: {
+                        x: { // x축 설정
+                            ticks: {
+                                color: 'black',         // x축 라벨 색상
+                                font: {
+                                    size: 5,         // x축 라벨 폰트 크기
+                                    family: 'Arial',  // x축 라벨 폰트
+                                    //weight: 'bold'    // x축 라벨 폰트 두께
+                                },
+                                maxRotation: 0,      // 최대 45도까지 회전
+                                minRotation: 0,      // 항상 45도로 회전 (겹침 방지)
+                                // autoSkip: false,   // 모든 라벨을 표시 (공간이 좁으면 겹칠 수 있음)
+                                padding: 10           // 라벨과 축 사이 간격
+                            },
+                            //title: { // x축 제목 (선택 사항)
+                            //    display: true,
+                            //    text: '월',
+                            //    font: {
+                            //        size: 16
+                            //    }
+                            //}
+                        },
+                        y: { // y축 설정
+                            beginAtZero: true,
+                            ticks: {
+                                color: 'blue',        // y축 라벨 색상
+                                font: {
+                                    size: 12,         // y축 라벨 폰트 크기
+                                    style: 'italic'   // y축 라벨 폰트 스타일
+                                },
+                                padding: 5
+                            },
+                            //title: { // y축 제목 (선택 사항)
+                            //    display: true,
+                            //    text: '판매량',
+                            //    font: {
+                            //        size: 16
+                            //    }
+                            //}
+                        }
+                    },
+                    // 다른 옵션들...
+                }
             });
         } else if (stats.type === 'numerical') {
             // DBH, Height, Carbon: 요약 통계 텍스트 + 히스토그램 (막대 차트)
             const summaryText = document.createElement('p');
-            summaryText.innerHTML = `
-                개수: ${stats.count}<br>
-                최소: ${stats.min.toFixed(2)}<br>
-                최대: ${stats.max.toFixed(2)}<br>
-                평균: ${stats.mean.toFixed(2)}<br>
-                합계: ${stats.sum.toFixed(2)}<br>
-                표준편차: ${stats.stdDev.toFixed(2)}
-            `;
+            if ( mapId === 'dbh') {
+                summaryText.innerHTML = `
+                    min: ${stats.min.toFixed(2)}(cm)&ensp;&ensp;
+                    max: ${stats.max.toFixed(2)}(cm)<br>
+                    mean: ${stats.mean.toFixed(2)}(cm)&ensp;&ensp;
+                    std: ${stats.stdDev.toFixed(2)}
+                `;
+            } else if ( mapId === 'height') {
+                summaryText.innerHTML = `
+                    min: ${stats.min.toFixed(2)}(m)&ensp;&ensp;
+                    max: ${stats.max.toFixed(2)}(m)<br>
+                    mean: ${stats.mean.toFixed(2)}(m)&ensp;&ensp;
+                    std: ${stats.stdDev.toFixed(2)}
+                `;
+            } else if ( mapId === 'carbon') {
+                summaryText.innerHTML = `
+                    min: ${stats.min.toFixed(2)}(kg)&ensp;&ensp;
+                    max: ${stats.max.toFixed(2)}(kg)<br>
+                    mean: ${stats.mean.toFixed(2)}(kg)&ensp;&ensp;
+                    sum: ${stats.sum.toFixed(2)}(kg)<br>
+                    std: ${stats.stdDev.toFixed(2)}
+                `;
+            }
             chartDiv.insertBefore(summaryText, canvas); // 캔버스 위에 요약 텍스트 추가
             
             statisticsCharts[mapId] = new Chart(ctx, {
@@ -685,20 +1004,20 @@ async function initializeMaps() {
     updateMapTitleSizes();
     // 창 크기 변경 시 맵 타이틀 크기 다시 계산
     window.addEventListener('resize', debounce(updateMapTitleSizes, 250));
-    initializeGridCenter(); // 그리드 중심점 초기화 및 이벤트 핸들러 연결
-    document.getElementById('tifBtn').addEventListener('click', ()=>{
-        if (isDrawTif){
-            Object.values(mapInstances).forEach((map,index) => {
-                map.drawTif();
-            });
-            isDrawTif = false;
-        } else {
-            Object.values(mapInstances).forEach((map,index) => {
-                map.eraseTif();
-            });
-            isDrawTif = true;
-        }
-    });
+    initializeGridCenter(); // 그리드 중심점 초기화
+    // document.getElementById('tifBtn').addEventListener('click', ()=>{ // 이 리스너는 제거합니다.
+    //     if (isDrawTif){
+    //         Object.values(mapInstances).forEach((map,index) => {
+    //             map.drawTif();
+    //         });
+    //         isDrawTif = false;
+    //     } else {
+    //         Object.values(mapInstances).forEach((map,index) => {
+    //             map.eraseTif();
+    //         });
+    //         isDrawTif = true;
+    //     }
+    // });
     // statBtn 이벤트 리스너 추가
     document.getElementById('statBtn').addEventListener('click', () => {
         isDrawingMode = !isDrawingMode; // 그리기 모드 토글
@@ -835,7 +1154,7 @@ initializeMaps().then(initializedMapInstances => {
     //mapInstances = initializedMapInstances;
     initializeGridCenter(); // 그리드 중심점 초기화
     updateMapTitleSizes();
-    isDrawTif = false;
+    // isDrawTif = false; // 이 라인을 제거합니다. drawTif()가 호출되었으므로 isDrawTif는 true 상태입니다.
 });
 
 function debounce(func, wait) {
@@ -906,17 +1225,21 @@ document.querySelectorAll('.floating-sub').forEach((button, index) => {
     });
 });
 
+// 초기 버튼 텍스트 설정: TIF가 켜져 있으므로, 다음 클릭 시 TIF를 끄도록 "Tif Off"로 설정합니다.
+document.getElementById('tifBtn').textContent = 'Tif Off'; 
+
 document.getElementById('tifBtn').addEventListener('click', () => {
-    if (isDrawTif){
-        Object.values(mapInstances).forEach((map,index) => {
-                map.drawTif();
+    if (isDrawTif) { // 현재 TIF가 켜져 있다면
+        Object.values(mapInstances).forEach((map, index) => {
+            map.eraseTif(); // TIF를 끈다
         });
-        isDrawTif = false;
-    } else {
-        Object.values(mapInstances).forEach((map,index) => {
-            map.eraseTif();
+        isDrawTif = false; // 상태 업데이트: TIF 꺼짐
+        document.getElementById('tifBtn').textContent = 'Tif On'; // 버튼 텍스트 변경: 다음 클릭 시 TIF 켜기
+    } else { // 현재 TIF가 꺼져 있다면
+        Object.values(mapInstances).forEach((map, index) => {
+            map.drawTif(); // TIF를 켠다
         });
-        isDrawTif = true;
+        isDrawTif = true; // 상태 업데이트: TIF 켜짐
+        document.getElementById('tifBtn').textContent = 'Tif Off'; // 버튼 텍스트 변경: 다음 클릭 시 TIF 끄기
     }
-    document.getElementById('tifBtn').textContent = isDrawTif ? 'Tif On' : 'Tif Off';
 });
