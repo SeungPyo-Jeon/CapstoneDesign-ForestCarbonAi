@@ -6,7 +6,7 @@ Paper(Accepted/교정중)[https://seungpyo-jeon.github.io/CapstoneDesign-ForestC
 수종비교[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html]  
 
 ## 프로젝트 개요
-<img width="600" alt="Image" src="https://github.com/user-attachments/assets/f0a70d1d-9cdb-4367-add2-cae4b2991a6c" background-color : white/>
+<img width="600" alt="Image" src="https://github.com/user-attachments/assets/fe62dd1e-5cf2-4c91-99aa-caab7a63bb4b" background-color : "#fff"/>
 
 탄소중립 전략의 핵심자원인 수림의 탄소포집량 계산을 위해 중요한 수종 예측을 목표로 합니다.  
 다중 다시점 위성 데이터를 입력으로 한 수종 분류 딥러닝 제작합니다.  
