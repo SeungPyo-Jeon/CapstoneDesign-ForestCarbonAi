@@ -2,8 +2,9 @@
 
 캡스톤디자인 레포지토리입니다.  
 Paper(Accepted/교정중)[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/paper.html]  
-종합[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html]  
-수종비교[https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html]  
+DemoPage *PC 버전  
+탄소량 계산 [https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html]  
+수종비교 [https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html]  
 
 ## 프로젝트 개요
 <img width="600" alt="Image" src="https://github.com/user-attachments/assets/5d0c9462-001b-4d8c-99e8-8c6d21757e64"/>
