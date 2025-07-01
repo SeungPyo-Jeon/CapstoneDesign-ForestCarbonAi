@@ -7,19 +7,23 @@
 Journal: MDPI remote sensing Q1
 
 ### 논문 개요
-탄소중립 전략의 핵심자원인 수림의 탄소포집량 계산을 위해 중요한 수종 정보는 필수적입니다.
-기존 임상도의 수종 정보는 25m의 해상도를 가지고 있으며 .
-바탕으로 더 고해상도의 수종 예측을 목표로 
-다중 다시점 위성 데이터를 입력으로 한 수종 분류 딥러닝 제작합니다.  
+탄소중립 전략의 핵심자원인 수림의 탄소포집량 계산을 위해 중요한 수종 정보는 필수적입니다.  
+기존 임상도의 수종 지도 해상도는 30m로 낮으며, 전수조사가 어려워 조사된 지역 이외에는 부정확성을 띕니다.  
+또한, 현장조사과 항공사진판독은 높은 비용, 노동집약적입니다.  
+이러한 한계점을 위성영상과 딥러닝을 통해 해결하고자 합니다.   
+
 ### 논문 방법론
-<img width="600" alt="Image" src="https://github.com/user-attachments/assets/7b6fe936-aca7-4bb1-a9c8-5da2114258b8" />
+<img width="300" alt="Image" src="https://github.com/user-attachments/assets/7b6fe936-aca7-4bb1-a9c8-5da2114258b8" />
+2.5m로 super-resolution한 위성영상( Planet scope, Sentinel-2 )을 입력받고,  
+기존 임상도의 수종지도를 'weak label'로 활용하여 수종분류 모델을 지도학습합니다.  
+이후 학습된 모델을 통해 2.5m의 고해상도의 수종지도를 만들어냅니다. 
 
 **DemoPage** *PC 버전  
 [탄소량 계산 바로가기](https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html)  
 [수종비교 바로가기](https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html)
 
 ## 프로젝트 포스터
-<img width="795" alt="Image" src="https://github.com/user-attachments/assets/d11968fe-87aa-45a3-9350-b0d3049f6e74" />
+<img width="400" alt="Image" src="https://github.com/user-attachments/assets/d11968fe-87aa-45a3-9350-b0d3049f6e74" />
 ## 프로젝트 개요
 
 
