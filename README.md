@@ -33,6 +33,6 @@ Journal: MDPI remote sensing Q1
   
 ### DemoPage *PC 버전으로 10초 정도의 로딩시간이 필요합니다.  
 👉[수종비교 바로가기](https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html)   
-- 기존 임상도와 개선된 임상도의 구분을 확인할 수 있는 데모 페이지입니다.
+- 기존 임상도와 개선된 임상도의 구분을 확인할 수 있는 데모 페이지입니다.  
 👉[탄소량 계산 바로가기](https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/multiMap.html)  
 - 예측된 수종, DBH, 수고의 예측을 한눈에 보고, 이를 바탕으로 예측된 탄소저장량을 확인 할 수 있는 페이지 입니다.
