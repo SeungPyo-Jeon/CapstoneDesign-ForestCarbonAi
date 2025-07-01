@@ -30,6 +30,7 @@ Journal: MDPI remote sensing Q1
 
 ### 프로젝트 포스터
 <img width="400" alt="Image" src="https://github.com/user-attachments/assets/d11968fe-87aa-45a3-9350-b0d3049f6e74" />  
+  
 ### DemoPage *PC 버전  
 * 10초 정도의 로딩시간이 필요합니다.  
 [수종비교 바로가기](https://seungpyo-jeon.github.io/CapstoneDesign-ForestCarbonAi/DemoPage/compareSpecies.html)  
