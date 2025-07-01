@@ -3,9 +3,9 @@
 캡스톤디자인 레포지토리입니다.  
 
 # 논문
-From Coarse to Crisp: Enhancing Tree Species Maps with Deep Learning and Satellite Imagery
+**Title**: From Coarse to Crisp: Enhancing Tree Species Maps with Deep Learning and Satellite Imagery
 **[[Paper 바로가기](https://www.mdpi.com/2072-4292/17/13/2222)]**  
-Journal: MDPI remote sensing Q1
+**Journal**: MDPI remote sensing Q1
 
 ### 논문 개요
 - 탄소중립 전략의 핵심자원인 수림의 탄소포집량 계산을 위해 중요한 수종 정보는 필수적입니다.  
